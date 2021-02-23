@@ -7,6 +7,7 @@ use Drupal\Core\Form\FormStateInterface;
 use Drupal\webform\Utility\WebformElementHelper;
 use Drupal\webform\Element\WebformCompositeFormElementTrait;
 use Drupal\Component\Utility\NestedArray;
+use Drupal\webform_strawberryfield\Tools\EDTFUtils;
 
 /**
  * Provides a webform element requiring users to double-element and confirm an email address.
@@ -49,7 +50,6 @@ class WebformMetadataDate extends FormElement {
       return $input;
     }
     else {
-
      $value = isset($element['#default_value']) ? $element['#default_value'] : NULL;
       if (!isset($value)) {
         $element['#has_garbage_value'] = TRUE;
@@ -68,8 +68,6 @@ class WebformMetadataDate extends FormElement {
 
     // Get shared properties.
     $shared_properties = [
-      '#title_display',
-      '#description_display',
       '#size',
       '#maxlength',
       '#pattern',
@@ -148,8 +146,23 @@ class WebformMetadataDate extends FormElement {
         }
       }
     }
-    $title_opt = explode(':', $element['#title']);
-    //$title_opt = isset($title_opt[0]) ? $title_opt[0] : $title_opt;
+
+    if(!empty($element['#edtf_validateme'])) {
+      $date_free_msg = t('EDTF formatted date');
+      $date_free_msg_add = [];
+      foreach(['intervals' => t('Intervals permitted'), 'sets' => t('Sets permited'), 'strict' => t('Valid calendar dates only')] as $field_suffix => $suffix_msg) {
+        $field_index = '#edtf_validate_option_' . $field_suffix;
+        if(!empty($element[$field_index])) {
+          $date_free_msg_add[] = $suffix_msg;
+        }
+      }
+      if(!empty($date_free_msg_add)) {
+        $date_free_msg .= ": " . implode('; ', $date_free_msg_add);
+      }
+    }
+    else {
+      $date_free_msg = t('Free form Date (e.g   Circa Spring of 1977)');
+    }
     // The date formatting/options
     $element['date_type'] = [
       '#type' => 'radios',
@@ -158,9 +171,57 @@ class WebformMetadataDate extends FormElement {
       '#options' => [
         'date_point' => t('Date'),
         'date_range' => t('Date Range'),
-        'date_free' => t('Freeform Date (e.g Circa Spring of 1977)'),
+        'date_free' => $date_free_msg,
       ]
     ];
+    /* Just and idea? Since we need modal labels.
+    // We may make the labels simply HTML and then deal with them via JS?
+    $element['date_from_label'] = [
+      '#type' => 'html_tag',
+      '#tag' => 'label',
+      '#attributes' => [
+        'for' => $element['#id'].'date-from'
+      ],
+      '#value' => 'Start Date',
+      '#states' => [
+        'invisible' => [
+          [':input[name="' . $name_prefix . '[date_type]"]' => ['value' => 'date_point']],
+          'or',
+          [':input[name="' . $name_prefix . '[date_type]"]' => ['value' => 'date_free']],
+        ]
+      ]
+    ];
+    $element['date_point_label'] = [
+      '#type' => 'html_tag',
+      '#tag' => 'label',
+      '#attributes' => [
+        'for' => $element['#id'].'date-from'
+      ],
+      '#value' => 'Point Date',
+      '#states' => [
+        'invisible' => [
+          [':input[name="' . $name_prefix . '[date_type]"]' => ['value' => 'date_range']],
+          'or',
+          [':input[name="' . $name_prefix . '[date_type]"]' => ['value' => 'date_free']],
+        ]
+      ]
+    ];
+    $element['date_to_label'] = [
+      '#type' => 'html_tag',
+      '#tag' => 'label',
+      '#attributes' => [
+        'for' => $element['#id'].'date-to'
+      ],
+      '#value' => 'End Date',
+      '#states' => [
+        'invisible' => [
+          [':input[name="' . $name_prefix . '[date_type]"]' => ['value' => 'date_point']],
+          'or',
+          [':input[name="' . $name_prefix . '[date_type]"]' => ['value' => 'date_free']],
+        ]
+      ]
+    ];
+    */
 
     $element['date_from'] = $element_shared_properties + array_intersect_key($element, array_combine($date_from_properties, $date_from_properties));
     $element['date_from']['#attributes']['class'][] = 'webform-date-from';
@@ -168,15 +229,14 @@ class WebformMetadataDate extends FormElement {
     $element['date_from']['#error_no_message'] = TRUE;
 
     $element['date_to'] = $element_shared_properties;
-    $element['date_to']['#title'] = t('To Date');
 
     $element['date_to']['#attributes']['class'][] = 'webform-date-to';
     $element['date_to']['#default_value'] = $date_to_value;
     $element['date_to']['#error_no_message'] = TRUE;
 
 
-    $element['date_to']['#title'] = t('To Date');
-    $element['date_from']['#title'] = t('Date');
+    $element['date_to']['#title'] = t('End Date (ISO 8601)');
+    $element['date_from']['#title'] = t('Start or Point Date (ISO 8601)');
 
     // pass #date attributes to sub elements before calling ::buildElement
 
@@ -256,8 +316,8 @@ class WebformMetadataDate extends FormElement {
     $element['#required'] = FALSE;
 
     // Hide title and description from being display.
-    $element['#title_display'] = 'invisible';
-    $element['#description_display'] = 'invisible';
+    //$element['#title_display'] = 'invisible';
+    //$element['#description_display'] = 'invisible';
 
     // Remove properties that are being applied to the sub elements.
     unset(
@@ -293,14 +353,14 @@ class WebformMetadataDate extends FormElement {
       ];
       unset($element['date_from'], $element['date_to'],  $element['date_free'], $element['date_type']);
     }
-
     return $element;
   }
 
   /**
-   * Validates an our weird date element
+   * Validates our weird date element
    */
   public static function validateMetadataDates(&$element, FormStateInterface $form_state, &$complete_form) {
+    //@TODO remake this whole method. Current implementation is just too complex.
     if (isset($element['flexbox'])) {
       $metadatadate_element =& $element['flexbox'];
     }
@@ -308,21 +368,53 @@ class WebformMetadataDate extends FormElement {
       $metadatadate_element =& $element;
     }
     if (empty($element['#value']) && isset($element['#webform_multiple'])) {
-
       $value = NestedArray::getValue($form_state->getValues(), $element['#parents']);
-      $valuetoset = [
+      $filtered_value = array_filter($value);
+      // Empty elements here will carry at least the date_type making them
+      // not empty. So deal with that by unsetting the value completely in
+      // that case.
+      if (count($filtered_value) == 1 && isset($filtered_value['date_type'])) {
+        $multi_item_parents = array_slice($element['#parents'],-2);
+        $makeshift_element['#parents'] = $multi_item_parents;
+        $form_state->setValueForElement($makeshift_element, NULL);
+      }
+      /*$valuetoset = [
         'date_free' => $metadatadate_element['date_free']['#value'],
         'date_from' => $metadatadate_element['date_from']['#value'],
         'date_to' => $metadatadate_element['date_to']['#value'],
         'date_type' => $metadatadate_element['date_type']['#value'],
-        ];
-      // Not setting anything here yet
-      // Once validation happens we should process further.
+        ]; */
     } else {
       if (!empty($element['#value'])) {
         $value = $form_state->getValue($element['#parents'], []);
-        $element['#value'] = $value;
-        $form_state->setValueForElement($element, $value);
+        $filtered_value = array_filter($value);
+        // Empty elements here will carry at least the date_type making them
+        // not empty. So deal with that by unsetting the value completely in
+        // that case.
+        if (count($filtered_value) == 1 && isset($filtered_value['date_type'])) {
+          $element['#value'] = [];
+        } else {
+          $element['#value'] = $value;
+        }
+        $form_state->setValueForElement($element, $element['#value']);
+      }
+    }
+
+    // Perform edtf validation on freeform date if so configured.
+    if(!empty($metadatadate_element['#edtf_validateme']) && !empty($element['#value']['date_free'])) {
+      $intervals = $metadatadate_element['#edtf_validate_option_intervals'] ?? FALSE;
+      $sets = $metadatadate_element['#edtf_validate_option_sets'] ?? FALSE;
+      $strict = $metadatadate_element['#edtf_validate_option_strict'] ?? FALSE;
+      $validation_errors = EDTFUtils::validate($element['#value']['date_free'], $intervals, $sets, $strict);
+      if (!empty($validation_errors)) {
+        // @TODO: Figure out how to get the error message to display for $element['date_free'] only.
+        // @TODO: If $form_state->setError($element['date_free'],...) is used, no error message appears.
+        $form_state->setError($element['date_free'],
+          t('The extended date time format string for the @name field is invalid. @messages',
+            [
+              '@name' => $element['#title'],
+              '@messages' => implode("\n", $validation_errors),
+            ]));
       }
     }
   }
